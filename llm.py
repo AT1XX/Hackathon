@@ -1,22 +1,61 @@
 import os
-import requests
 from dotenv import load_dotenv
+from openai import OpenAI
 
-load_dotenv(dotenv_path=".env", override=True)
+load_dotenv()
 
-MODEL_API_KEY = os.getenv("MODEL_API_KEY")
-MODEL_ENDPOINT = os.getenv("MODEL_ENDPOINT")
-MODEL_NAME = os.getenv("MODEL_NAME")
+API_KEY = os.getenv("MODEL_API_KEY")
+RAW_BASE = (os.getenv("MODEL_ENDPOINT") or "").rstrip("/")  # env may include junk paths
+MODEL = os.getenv("MODEL_NAME", "google/gemma-3-27b-it")
 
-print("USING ENDPOINT:", MODEL_ENDPOINT)
+_client = None
 
+def _normalize_base(raw: str) -> str:
+    """
+    Accepts:
+      https://host
+      https://host/v1
+      https://host/v1/
+      https://host/v1/chat
+      https://host/v1/chat/
+    Returns:
+      https://host/v1
+    """
+    if not raw:
+        return ""
+
+    # strip common accidental suffixes
+    for suffix in ("/v1/chat", "/v1/chat/", "/chat", "/chat/", "/v1", "/v1/"):
+        if raw.endswith(suffix.rstrip("/")):
+            raw = raw[: -len(suffix.rstrip("/"))]
+            raw = raw.rstrip("/")
+            break
+
+    return f"{raw}/v1"
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        if not API_KEY:
+            raise RuntimeError("Missing MODEL_API_KEY in .env")
+        if not RAW_BASE:
+            raise RuntimeError("Missing MODEL_ENDPOINT in .env")
+
+        base_url = _normalize_base(RAW_BASE)
+
+        # Helpful debug print (shows up in your Streamlit logs / terminal)
+        print(f"[LLM] Using base_url={base_url} model={MODEL}")
+
+        _client = OpenAI(base_url=base_url, api_key=API_KEY)
+    return _client
 
 def generate_insights(patterns: dict) -> str:
-    if not MODEL_ENDPOINT or not MODEL_API_KEY:
-        return "LLM not configured: set MODEL_ENDPOINT and MODEL_API_KEY in .env"
+    try:
+        client = _get_client()
 
-    prompt = f"""
+        prompt = f"""
 You are an AI habit coach.
+
 Based on the user patterns below:
 1) Explain the key issues clearly
 2) Identify likely root causes
@@ -27,33 +66,19 @@ User patterns (JSON):
 {patterns}
 
 Tone: supportive, practical, concise. No fluff.
-"""
+""".strip()
 
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": "You are a helpful habit coach."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.4,
-    }
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "You are a helpful habit coach."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.4,
+            max_tokens=350,
+        )
 
-    # This is the only part you may need to change depending on the API format:
-    r = requests.post(
-        MODEL_ENDPOINT,
-        headers={"Authorization": f"Bearer {MODEL_API_KEY}",
-                 "Content-Type": "application/json"},
-        json=payload,
-        timeout=30,
-    )
-    r.raise_for_status()
+        return (resp.choices[0].message.content or "").strip()
 
-    data = r.json()
-
-    # Common response shapes:
-    # OpenAI-like: data["choices"][0]["message"]["content"]
-    if "choices" in data:
-        return data["choices"][0]["message"]["content"]
-
-    # Fallback:
-    return str(data)
+    except Exception as e:
+        return f"AI insights (fallback mode — LLM error): {e}"
