@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import tempfile
+import mistune  # add at the top with other imports
 
 from analysis import load_data, compute_patterns
 from llm import generate_insights
@@ -356,16 +357,30 @@ with col3:
         st.markdown("---")
         st.markdown("Output")
 
-        html = md.markdown(clean, extensions=["extra"])
-        st.markdown(
-            f"""
-        <div style="height:620px; overflow-y:auto; padding:12px; border:1px solid #3333; border-radius:8px;">
-        {html}
-        </div>
-        """,
-            unsafe_allow_html=True
-        )
 
+       # At the top of app.py (or before the AI output section)
+        st.markdown("""
+        <style>
+            .scrollable-container ul, .scrollable-container ol {
+                list-style-position: inside;
+                margin-left: -20px;
+            }
+            .scrollable-container li {
+                display: list-item;
+                list-style-type: disc;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        html_content = mistune.html(clean)
+        styled_html = f'''
+        <div class="scrollable-container" style="height:620px; overflow-y:auto; padding:12px; border:1px solid #3333; border-radius:8px;">
+            {html_content}
+       
+        '''
+        st.markdown(styled_html, unsafe_allow_html=True)
+
+    
         st.download_button(
             label="📥 Download Recommendations",
             data=clean,
