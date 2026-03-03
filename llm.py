@@ -1,57 +1,28 @@
 import os
+import traceback
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI  # Groq uses OpenAI-compatible SDK
 
 load_dotenv()
 
 API_KEY = os.getenv("MODEL_API_KEY")
-RAW_BASE = (os.getenv("MODEL_ENDPOINT") or "").rstrip(
-    "/")  # env may include junk paths
-MODEL = os.getenv("MODEL_NAME", "google/gemma-3-27b-it")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama3-70b-8192")
 
 _client = None
 
-
-def _normalize_base(raw: str) -> str:
-    """
-    Accepts:
-      https://host
-      https://host/v1
-      https://host/v1/
-      https://host/v1/chat
-      https://host/v1/chat/
-    Returns:
-      https://host/v1
-    """
-    if not raw:
-        return ""
-
-    # strip common accidental suffixes
-    for suffix in ("/v1/chat", "/v1/chat/", "/chat", "/chat/", "/v1", "/v1/"):
-        if raw.endswith(suffix.rstrip("/")):
-            raw = raw[: -len(suffix.rstrip("/"))]
-            raw = raw.rstrip("/")
-            break
-
-    return f"{raw}/v1"
-
-
-def _get_client() -> OpenAI:
+def _get_client():
     global _client
     if _client is None:
         if not API_KEY:
             raise RuntimeError("Missing MODEL_API_KEY in .env")
-        if not RAW_BASE:
-            raise RuntimeError("Missing MODEL_ENDPOINT in .env")
-
-        base_url = _normalize_base(RAW_BASE)
-
-        # Helpful debug print (shows up in your Streamlit logs / terminal)
-        print(f"[LLM] Using base_url={base_url} model={MODEL}")
-
-        _client = OpenAI(base_url=base_url, api_key=API_KEY)
+        
+        # Groq endpoint
+        _client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=API_KEY
+        )
+        print(f"[LLM] Using Groq with model: {MODEL_NAME}")
     return _client
-
 
 def generate_insights(patterns: dict) -> str:
     try:
@@ -117,16 +88,24 @@ Based on the user patterns below, provide SPECIFIC, ACTIONABLE recommendations:
 """
 
         resp = client.chat.completions.create(
-            model=MODEL,
+            model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "You are a supportive but data-driven habit coach. Provide specific, actionable advice based on the user's actual data patterns."},
+                {"role": "system", "content": "You are a supportive but data-driven habit coach."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
             max_tokens=2500,
         )
-
+        
         return (resp.choices[0].message.content or "").strip()
-
+        
     except Exception as e:
-        return f"AI insights (fallback mode — LLM error): {e}"
+        print("=" * 60)
+        print("ERROR in generate_insights:")
+        traceback.print_exc()
+        print("=" * 60)
+        return f"""⚠️ **AI insights (fallback mode – LLM error)**
+
+**Error details:**  
+`{type(e).__name__}: {e}'
+"""
